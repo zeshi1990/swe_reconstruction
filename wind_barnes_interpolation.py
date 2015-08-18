@@ -48,7 +48,7 @@ def cal_delta_n():
 
 # Start implementing the Barnes Objective Function
 def barnes_obj_interpolate(res=500):
-    dem_fn = "data/toporad/radiation/DEM/" + str(res) + "m_dem.tif"
+    dem_fn = "DEM/" + str(res) + "m_dem.tif"
     dem_ds = gdal.Open(dem_fn, GA_ReadOnly)
     dem_georef = dem_ds.GetGeoTransform()
     dem_raster = dem_ds.ReadAsArray()
