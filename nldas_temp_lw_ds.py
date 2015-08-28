@@ -3,7 +3,7 @@ __author__ = 'zeshi'
 ###################################################################################
 #
 # This function is for downscaling all the altitudinal dependent NLDAS altributes
-# DLWRF, TMP, UGRD, VGRD, APCP
+# DLWRF, TMP, UGRD, VGRD, APCP, SPFH, PRES
 # Wind information may need to be corrected by using MicroMet model
 # We found that TMP and DLWRF are valid for altitudinal interpolation
 #
@@ -77,6 +77,20 @@ def regression_information(dem, bilinear_interpolation_results):
     residual = np.reshape(residual, dem_shape)
     return RANSAC_lr, residual
 
+# This function check linear relationship of feature
+def linear_check(year, month, day, hour, attr="TMP"):
+    yday = day_of_year(year, month, day)
+    nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
+               "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
+               str(day).zfill(2) + "." + str(hour).zfill(2) + "00.002.grb"
+    nldas_ds = gdal.Open(nldas_fn, GA_ReadOnly)
+    nldas_gt = nldas_ds.GetGeoTransform()
+    attr_raster = find_band_raster(nldas_ds, attr)
+    dem, bilinear_result = bilinear_interpolation(attr_raster, nldas_gt)
+    plt.plot(dem.flatten(), bilinear_result.flatten(), '.b')
+    plt.show()
+
+
 # This function apply the linear regression model implemented in regression_information function
 # to the DEM that is of interest (either 30m or 500m) and the residual is interpolated across the area
 def apply_regression_on_dem(lr, new_dem, residual):
@@ -88,7 +102,7 @@ def apply_regression_on_dem(lr, new_dem, residual):
     result = lr_result + interpolated_residual
     return result
 
-def nldas_ds(year, month, day, hour, attr="TMP", res=500):
+def nldas_attr_ds(year, month, day, hour, attr="TMP", res=500):
     assert attr=="TMP" or attr=="DLWRF", "The attribute %r is not supported in linear interpolation" % attr
     yday = day_of_year(year, month, day)
     nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
@@ -110,7 +124,7 @@ def nldas_ds(year, month, day, hour, attr="TMP", res=500):
 
 # This is an example to validate the bilinear interpolation code could work
 def example_bilinear_interpolation():
-    bilinear_result, upscale_raster = nldas_ds(2001, 6, 6, 18, attr="TMP", res=500)
+    bilinear_result, upscale_raster = nldas_attr_ds(2001, 6, 6, 18, attr="TMP", res=500)
     f, ax = plt.subplots(1, 2)
     im = ax[0].imshow(bilinear_result, vmin=np.min(upscale_raster), vmax=np.max(upscale_raster), interpolation='none')
     ax[1].imshow(upscale_raster, vmin=np.min(upscale_raster), vmax=np.max(upscale_raster))
@@ -118,7 +132,6 @@ def example_bilinear_interpolation():
     plt.show()
 
 def main():
-    example_bilinear_interpolation()
-
+    linear_check(2001, 1, 1, 18, attr="PRES")
 if __name__ == "__main__":
     main()

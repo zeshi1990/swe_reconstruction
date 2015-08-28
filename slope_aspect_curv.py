@@ -4,6 +4,8 @@ from gdal import GA_ReadOnly
 import numpy as np
 from scipy.signal import convolve2d
 
+
+
 def cal_slope_aspect(res = 500):
     dem_fn = "DEM/" + str(res) + "m_dem.tif"
     dem_ds = gdal.Open(dem_fn, GA_ReadOnly)
@@ -14,6 +16,10 @@ def cal_slope_aspect(res = 500):
     x, y = np.gradient(dem_array)
     slope = np.arctan(np.sqrt(x * x + y * y))
     aspect = 3 * np.pi / 2 - np.arctan2(-x, y)
+    slope_name = "DEM/slope_" + str(res) + "m.npy"
+    aspect_name = "DEM/aspect_" + str(res) + "m.npy"
+    np.save(slope_name, slope)
+    np.save(aspect_name, aspect)
     return slope, aspect
 
 def cal_curvature(res = 500, scale = 500):
@@ -36,40 +42,49 @@ def cal_curvature(res = 500, scale = 500):
     abs_max, abs_min = abs(np.max(curv)), abs(np.min(curv))
     max_scaler = np.max([abs_max, abs_min])
     curv *= 0.5/max_scaler
+    curv_name = "DEM/curvature_" + str(res) + "m.npy"
+    np.save(curv_name, curv)
     return curv
 
-def wind_ts_query(station_id, datetime, db):
-    collection = db.wind_ts
-    query_json = {"time": datetime, "station_id": station_id}
-    return collection.get
 
+class wind_redistribution():
 
+    ALL_STATIONS_ID = np.array([ 720267.,  720614.,  720645.,  725845.,  725846.,  725847.,
+        749486.,   42603.,   41901.,   41908.,   42608.,   41909.]).astype(int)
 
-def wind_redistribution(datetime, db, res=500, scale=500):
-    from wind_barnes_interpolation import barnes_obj_interpolate
-    wind_station_array = [0,0,0,0,0]
-    u_wind = 0
-    v_wind = 0
-    for station_id, weight in barnes_obj_interpolate(res=res):
-        u_wind_temp, v_wind_temp = wind_ts_query(station_id, datetime, db) #pseudo code for querying the wind from time series
-        u_wind += u_wind_temp * weight
-        v_wind += v_wind_temp * weight
-    wind_magnitude = np.sqrt(u_wind ** 2 + v_wind ** 2)
-    theta = 3 * np.pi / 2 - np.arctan2(v_wind, u_wind)
-    slope, aspect = cal_slope_aspect(res=res)
-    omega_s = slope * np.cos(theta - aspect)
-    omega_c = cal_curvature(res=res, scale=scale)
-    wind_correction_weight =  1 + 0.5 * omega_s + 0.5 * omega_c
-    theta_t = theta - 0.5 * omega_s * np.sin(2*(aspect - theta))
-    return wind_correction_weight * wind_magnitude, theta_t
+    def __init__(self, collection, res=500):
+        self.slope = gdal.Open("DEM/slope_" + str(res) + "m.npy")
+        self.aspect = gdal.Open("DEM/aspect_" + str(res) + "m.npy")
+        self.curvature = gdal.Open("DEM/curvature_" + str(res) + "m.npy")
+        self.res = res
+        self.collection = collection
 
+    def wind_ts_query(self, station_id, datetime):
+        query_json = {"date": datetime, "site_id": station_id}
+        result = self.collection.find(query_json)
+        return result[0]["wind speed"], result[0]["wind direction"]
 
-
+    def wind_redistribution(self, datetime):
+        datetime_obj = datetime
+        u_wind = 0.
+        v_wind = 0.
+        for station_id in self.ALL_STATIONS_ID:
+            weight = np.load("wind/" + str(int(station_id)) + "_" + str(self.res) + "m_weight.npy")
+            wind_speed, wind_dir = self.wind_ts_query(station_id, datetime_obj)
+            wind_dir_rad = wind_dir / 180.0 * np.pi
+            u = - wind_speed * np.cos(3.0 * np.pi / 2.0 - wind_dir_rad)
+            v = - wind_speed * np.sin(3.0 * np.pi / 2.0 - wind_dir_rad)
+            u_wind += u * weight
+            v_wind += v * weight
+        wind_magnitude = np.sqrt(u_wind ** 2 + v_wind ** 2)
+        theta = 3 * np.pi / 2 - np.arctan2(v_wind, u_wind)
+        omega_s = self.slope * np.cos(theta - self.aspect)
+        omega_c = self.curvature
+        wind_correction_weight =  1. + 0.5 * omega_s + 0.5 * omega_c
+        return wind_correction_weight * wind_magnitude
 
 def main():
-    slope, aspect = cal_slope_aspect()
-    curv = cal_curvature()
-    from nldas_temp_lw_ds import array2raster
+    pass
 
 if __name__ == "__main__":
     main()

@@ -326,7 +326,6 @@ def asos_save():
         asos[i] = new_site
     pickle.dump(asos, open("wind/asos.p", "wb"))
 
-
 def main():
     raws = pickle.load(open("wind/asos.p", "rb"))
     for temp in raws:

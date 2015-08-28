@@ -6,6 +6,7 @@ from sklearn.neighbors import NearestNeighbors
 from numpy.core.defchararray import rstrip
 import gdal
 from gdal import GA_ReadOnly
+from datetime import datetime
 
 
 ##################################################################################
@@ -14,37 +15,39 @@ from gdal import GA_ReadOnly
 # from Barnes Objective Interpolation Function, the correction is implemented
 # by the Liston et al. 2006 MicroMet model
 ##################################################################################
+DELTA_N = 0.21215704869671478
+ALL_STATIONS_ID = np.array([ 720267.,  720614.,  720645.,  725845.,  725846.,  725847.,
+        749486.,   42603.,   41901.,   41908.,   42608.,   41909.])
+ALL_STATIONS_LOC = np.array([[  38.955  , -121.082  ],
+       [  38.909  , -121.351  ],
+       [  38.7205 , -120.7515 ],
+       [  39.277  , -120.71   ],
+       [  39.32   , -120.136  ],
+       [  38.8905 , -119.9975 ],
+       [  39.224  , -121.003  ],
+       [  38.90556, -120.69722],
+       [  39.14389, -120.50889],
+       [  39.09139, -120.73167],
+       [  39.07167, -120.42167],
+       [  39.08361, -120.17111]])
+
 
 # Find the average distance of observations, delta_n
 def cal_delta_n():
-    num_link = 0
-    stations_info = np.load("data/ASOS_wind/station_info.npy")
-    stations_id = stations_info[:, 0]
-    stations_loc = stations_info[:, 1:]
-    id_string = stations_id.astype(int).astype(str)
-    # print id_string
-    id_string_fp = np.char.rjust(id_string, 6)
-    unique_id_fp = np.unique(id_string_fp)
-    unique_id_idx = []
-    for id_fp in unique_id_fp:
-        idx = np.where(id_string_fp == id_fp)
-        # print idx
-        unique_id_idx.append(idx[0][0])
-    unique_id_string = id_string[unique_id_idx]
-    unique_loc = stations_loc[unique_id_idx, :]
-    unique_id = unique_id_string.astype(float)
-    unique_station = np.column_stack((unique_id, unique_loc))
-    # print unique_loc
-    raws_stations_info = np.load("data/ASOS_wind/RAWS_station_info.npy")
-    all_stations_info = np.append(unique_station, raws_stations_info, axis=0)
-    all_stations_loc = all_stations_info[:, 1:]
-    # print all_stations_loc
-    nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(all_stations_loc)
-    distances, indices = nbrs.kneighbors(all_stations_loc)
-    # print indices
-    # print distances
+    from pymongo import MongoClient
+    client = MongoClient()
+    db = client.amr_proj
+    collection = db.wind
+    query_list = collection.find({"date": datetime(2000, 1, 1, 0, 0, 0)})
+    station_id = np.zeros(12)
+    station_loc = np.zeros((12,2))
+    for i, item in enumerate(query_list):
+        station_id[i] = item['site_id']
+        station_loc[i] = [item['lat'], item['lon']]
+    nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(station_loc)
+    distances, indices = nbrs.kneighbors(station_loc)
     delta_n = np.average(distances[:, 1])
-    return delta_n, all_stations_info
+    return delta_n, station_id, station_loc
 
 # Start implementing the Barnes Objective Function
 def barnes_obj_interpolate(res=500):
@@ -56,32 +59,30 @@ def barnes_obj_interpolate(res=500):
     pixel_lat = (row_idx + 0.5) * dem_georef[5] + dem_georef[3]
     pixel_lon = (col_idx + 0.5) * dem_georef[1] + dem_georef[0]
 
-    delta_n, all_stations_info = cal_delta_n()
     weight_list = []
     total_weight = 0
-    print all_stations_info[:, 0]
-    for station_info in all_stations_info:
-        lat_diff = pixel_lat - station_info[1]
-        lon_diff = pixel_lon - station_info[2]
+
+    for station_loc in ALL_STATIONS_LOC:
+        print station_loc
+        lat_diff = pixel_lat - station_loc[0]
+        lon_diff = pixel_lon - station_loc[1]
         distance = np.square(lat_diff) + np.square(lon_diff)
-        k = 5.052 * (2 * delta_n / np.pi) ** 2
+        k = 5.052 * (2 * DELTA_N / np.pi) ** 2
         weight = np.exp(-distance / k)
         weight_list.append(weight)
+
     for weight in weight_list:
         total_weight += weight
-    unit = 0
+
     for i, weight in enumerate(weight_list):
         divided_weight = weight / total_weight
-        unit += divided_weight
-        # print divided_weight
-        station_id = str(int(all_stations_info[i, 0]))
-        # print station_id
-        file_name = station_id + "_weight.npy"
-        print len(pickle.dumps(divided_weight, -1))
-        yield station_id, divided_weight
+        station_id = str(int(ALL_STATIONS_ID[i]))
+        print station_id, ALL_STATIONS_LOC[i]
+        file_name = "wind/" + station_id + "_" + str(res) + "m_weight.npy"
+        np.save(file_name, divided_weight)
 
 def main():
-    barnes_obj_interpolate()
+    pass
 
 if __name__ == "__main__":
     main()
