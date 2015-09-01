@@ -12,10 +12,27 @@ __author__ = 'zeshi'
 import gdal
 import numpy as np
 from osgeo.gdal import GA_ReadOnly
-from nldas_sw_ds import day_of_year, find_band_raster
-from matplotlib import pyplot as plt
+from datetime import date
+import pylab as plt
 from sklearn.linear_model import LinearRegression, RANSACRegressor
 from skimage.transform import resize
+
+def find_band_raster(dataset, variable):
+    '''
+    Finds the band number inside the GRIB file, given the variable and the level names
+    '''
+    for i in range(1,dataset.RasterCount + 1):
+        band = dataset.GetRasterBand(i)
+        metadata = band.GetMetadata()
+        band_variable = metadata['GRIB_ELEMENT']
+        if (variable == band_variable):
+            return dataset.GetRasterBand(i).ReadAsArray()
+    return None
+
+def day_of_year(year, month, day):
+    Date = date(year, month, day)
+    day_of_year = str(Date.timetuple().tm_yday).zfill(3)
+    return str(day_of_year).zfill(3)
 
 # This function proceed bilinear interpolation from nldas to 1/8 degree dem boundary
 # since the cell size are the same, no need to consider the difference
@@ -90,7 +107,21 @@ def linear_check(year, month, day, hour, attr="TMP"):
     plt.plot(dem.flatten(), bilinear_result.flatten(), '.b')
     plt.show()
 
-
+# This function check linear relationship of wind
+def linear_check_wind(year, month, day, hour):
+    yday = day_of_year(year, month, day)
+    nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
+               "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
+               str(day).zfill(2) + "." + str(hour).zfill(2) + "00.002.grb"
+    nldas_ds = gdal.Open(nldas_fn, GA_ReadOnly)
+    nldas_gt = nldas_ds.GetGeoTransform()
+    u_raster = find_band_raster(nldas_ds, "UGRD")
+    v_raster = find_band_raster(nldas_ds, "VGRD")
+    wind_raster = np.sqrt(u_raster ** 2 + v_raster ** 2)
+    dem, bilinear_result = bilinear_interpolation(wind_raster, nldas_gt)
+    # plt.imshow(bilinear_result)
+    plt.plot(dem.flatten(), bilinear_result.flatten(), '.b')
+    plt.show()
 # This function apply the linear regression model implemented in regression_information function
 # to the DEM that is of interest (either 30m or 500m) and the residual is interpolated across the area
 def apply_regression_on_dem(lr, new_dem, residual):
@@ -103,35 +134,64 @@ def apply_regression_on_dem(lr, new_dem, residual):
     return result
 
 def nldas_attr_ds(year, month, day, hour, attr="TMP", res=500):
-    assert attr=="TMP" or attr=="DLWRF", "The attribute %r is not supported in linear interpolation" % attr
-    yday = day_of_year(year, month, day)
-    nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
-               "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
-               str(day).zfill(2) + "." + str(hour).zfill(2) + "00.002.grb"
-    nldas_ds = gdal.Open(nldas_fn, GA_ReadOnly)
-    nldas_gt = nldas_ds.GetGeoTransform()
-    attr_raster = find_band_raster(nldas_ds, attr)
-    dem, bilinear_result = bilinear_interpolation(attr_raster,nldas_gt)
-    lr, residual = regression_information(dem, bilinear_result)
-    if res==500:
-        new_dem_fn = "DEM/500m_dem.tif"
+    assert attr=="TMP" or attr=="DLWRF" or attr=="SPFH" or attr=="PRES" or attr=="WIND",\
+        "The attribute %r is not supported in linear interpolation" % attr
+    if attr=="WIND":
+        yday = day_of_year(year, month, day)
+        nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
+                   "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
+                   str(day).zfill(2) + "." + str(hour).zfill(2) + "00.002.grb"
+        nldas_ds = gdal.Open(nldas_fn, GA_ReadOnly)
+        nldas_gt = nldas_ds.GetGeoTransform()
+        u_wind_raster = find_band_raster(nldas_ds, "UGRD")
+        v_wind_raster = find_band_raster(nldas_ds, "VGRD")
+        dem, u_wind_bilinear_result = bilinear_interpolation(u_wind_raster, nldas_gt)
+        dem, v_wind_bilinear_result = bilinear_interpolation(v_wind_raster, nldas_gt)
+        u_wind_lr, u_wind_residual = regression_information(dem, u_wind_bilinear_result)
+        v_wind_lr, v_wind_residual = regression_information(dem, v_wind_bilinear_result)
+        if res==500:
+            new_dem_fn = "DEM/500m_dem.tif"
+        else:
+            new_dem_fn = "DEM/30m_dem.tif"
+        new_dem_ds = gdal.Open(new_dem_fn, GA_ReadOnly)
+        new_dem = new_dem_ds.ReadAsArray()
+        u_wind_downscale_raster = apply_regression_on_dem(u_wind_lr, new_dem, u_wind_residual)
+        v_wind_downscale_raster = apply_regression_on_dem(v_wind_lr, new_dem, v_wind_residual)
+        # attr_imshow(u_wind_bilinear_result, u_wind_downscale_raster)
+        # attr_imshow(v_wind_bilinear_result, v_wind_downscale_raster)
+        return u_wind_downscale_raster, v_wind_downscale_raster
     else:
-        new_dem_fn = "DEM/30m_dem.tif"
-    new_dem_ds = gdal.Open(new_dem_fn, GA_ReadOnly)
-    new_dem = new_dem_ds.ReadAsArray()
-    downscale_raster = apply_regression_on_dem(lr, new_dem, residual)
-    return bilinear_result, downscale_raster
+        yday = day_of_year(year, month, day)
+        nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
+                   "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
+                   str(day).zfill(2) + "." + str(hour).zfill(2) + "00.002.grb"
+        nldas_ds = gdal.Open(nldas_fn, GA_ReadOnly)
+        nldas_gt = nldas_ds.GetGeoTransform()
+        attr_raster = find_band_raster(nldas_ds, attr)
+        dem, bilinear_result = bilinear_interpolation(attr_raster,nldas_gt)
+        lr, residual = regression_information(dem, bilinear_result)
+        if res==500:
+            new_dem_fn = "DEM/500m_dem.tif"
+        else:
+            new_dem_fn = "DEM/30m_dem.tif"
+        new_dem_ds = gdal.Open(new_dem_fn, GA_ReadOnly)
+        new_dem = new_dem_ds.ReadAsArray()
+        downscale_raster = apply_regression_on_dem(lr, new_dem, residual)
+        # attr_imshow(bilinear_result, downscale_raster)
+        return downscale_raster
 
-# This is an example to validate the bilinear interpolation code could work
-def example_bilinear_interpolation():
-    bilinear_result, upscale_raster = nldas_attr_ds(2001, 6, 6, 18, attr="TMP", res=500)
-    f, ax = plt.subplots(1, 2)
-    im = ax[0].imshow(bilinear_result, vmin=np.min(upscale_raster), vmax=np.max(upscale_raster), interpolation='none')
-    ax[1].imshow(upscale_raster, vmin=np.min(upscale_raster), vmax=np.max(upscale_raster))
-    plt.colorbar(im)
-    plt.show()
+def attr_imshow(original, scaled):
+        min = np.min([np.min(original), np.min(scaled)])
+        max = np.max([np.max(original), np.max(scaled)])
+        plt.subplot(2, 1, 1)
+        plt.imshow(original, vmin=min, vmax=max)
+        plt.subplot(2, 1, 2)
+        plt.imshow(scaled, vmin=min, vmax=max)
+        plt.colorbar(orientation="horizontal")
+        plt.show()
 
 def main():
-    linear_check(2001, 1, 1, 18, attr="PRES")
+    for day in [1,2,3,4,5,6,7,8]:
+        linear_check_wind(2001, 1, day, 18)
 if __name__ == "__main__":
     main()
