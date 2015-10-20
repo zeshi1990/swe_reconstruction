@@ -22,37 +22,39 @@ class snow17():
     RHO_W = 1.0                                                             # g / cm^3, density of water
     R_SPECIFIC = 287.058                                                    # J/(kg * K), specific gas constant for dry air
     K = 0.40                                                                # dimensionless, von Karman's constant
-    DEM_30 = gdal.Open("DEM/500m_dem.tif", GA_ReadOnly)                     # 30m DEM
-    DEM_500 = gdal.Open("DEM/30m_dem.tif", GA_ReadOnly)                     # 500m DEM
+    DEM_30 = gdal.Open("DEM/30m_dem.tif", GA_ReadOnly).ReadAsArray()       # 30m DEM
+    DEM_500 = gdal.Open("DEM/500m_dem.tif", GA_ReadOnly).ReadAsArray()       # 500m DEM
     P_A_30 = 33.86 * (29.9 - 0.335 * DEM_30 + 0.00022 * DEM_30 ** 2.4)      # 30m standard atmosphere
     P_A_500 = 33.86 * (29.9 - 0.335 * DEM_500 + 0.00022 * DEM_500 ** 2.4)   # 500m standard atmosphere
     PA_2_MB = 0.01                                                          # 0.01 Pa/mb
 
-    def __init__(self, air_tmp, snow_tmp, pres, spfh, wind, dlw, res=500):
+    def __init__(self, air_tmp, snow_tmp, pres, spfh, wind, dlw, precip, res=500):
         self.air_tmp = air_tmp
         self.snow_tmp = snow_tmp
         self.pres = pres
         self.spfh = spfh
         self.wind = wind
         self.dlw = dlw
-        afd_fn = "vegetation/amr_forest_density_" + str(res) + "m.tif"
-        self.F_c = gdal.Open(afd_fn, GA_ReadOnly).ReadAsArray() / 100.0
+        self.precip = precip
+        afd_fn = "vegetation/amr_nlcd2011_" + str(res) + "m.tif"
+        self.F_c = gdal.Open(afd_fn, GA_ReadOnly).ReadAsArray().astype(float) / 100.0
         self.res = res
         self.calc_relative_humidity()
         self.calc_air_saturate_vapor_pressure()
         self.calc_snow_saturate_vapor_pressure()
         self.calc_air_vapor_pressure()
         self.calc_air_density()
-        self.calc_b()
-        self.calc_FU()
-        self.calc_exchange_coefficient()
-        self.calc_unstable_correction()
+        # self.calc_b()
+        # self.calc_FU()
+        # self.calc_exchange_coefficient()
+        # self.calc_unstable_correction()
         self.calc_atm_emissivity()
         self.calc_weighted_emissivity()
         self.calc_LH()
         self.calc_SH()
         self.calc_DLW()
         self.calc_ULW()
+        self.calc_Qm()
 
     def calc_relative_humidity(self):
         """
@@ -88,7 +90,7 @@ class snow17():
         Calculate dry air density
         :return:
         """
-        self.rho_a = self.pres / (self.R_SPECIFIC * (self.air_tmp + 273.16)) / 1000.0
+        self.rho_a = self.pres / (self.R_SPECIFIC * (self.air_tmp + 273.16))
 
     def calc_b(self):
         """
@@ -134,7 +136,7 @@ class snow17():
         Calculate atmospheric emissivity
         :return:
         """
-        self.atm_emissivity = self.dlw / ((self.air_tmp + 273.16) ** 4 * 5.67 * 10.0 ** (-8))
+        self.atm_emissivity = self.dlw / (((self.air_tmp + 273.16) ** 4.0) * (5.67 * 10.0 ** (-8)))
 
     def calc_weighted_emissivity(self):
         """
@@ -148,19 +150,15 @@ class snow17():
         Calculate latent heat
         :return:
         """
-        Q_e = self.zeta * self.L_S * self.RHO_W / 10.0 * self.fu * (self.e_a - self.e_sat_snow) * self.PA_2_MB
-        self.LH = Q_e * 11.62
+        self.LH = (2500.8 - 2.366 * self.snow_tmp) * self.rho_a * 0.0029 * (62.2 / self.pres) * \
+                  ((self.e_a - self.e_sat_snow)) / 100. * self.wind * 1000
 
     def calc_SH(self):
         """
         Calculate sensible heat
         :return:
         """
-        if self.res == 500:
-            Q_h = self.zeta * self.RHO_W / 10.0 * 0.24 * self.P_A_500 / 0.622 * self.fu * (self.air_tmp - self.snow_tmp)
-        else:
-            Q_h = self.zeta * self.RHO_W / 10.0 * 0.24 * self.P_A_30 / 0.622 * self.fu * (self.air_tmp - self.snow_tmp)
-        self.SH = Q_h * 11.62
+        self.SH = self.rho_a * 1005 * 0.0029 * (self.air_tmp - self.snow_tmp) * self.wind
 
     def calc_DLW(self):
         """
@@ -175,3 +173,12 @@ class snow17():
         :return:
         """
         self.ULW = 0.98 * 5.67 * 10.0 ** (-8) * (self.snow_tmp + 273.16) ** 4
+
+    def calc_Qm(self):
+        """
+        Calculate the heat transfer from the precipitation, only rain is counted
+        :return:
+        """
+        precip = self.precip
+        air_tmp = self.air_tmp
+        self.Qm = precip / 3600.0 * 4180.0 * air_tmp

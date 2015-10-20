@@ -134,7 +134,7 @@ def apply_regression_on_dem(lr, new_dem, residual):
     return result
 
 def nldas_attr_ds(year, month, day, hour, attr="TMP", res=500):
-    assert attr=="TMP" or attr=="DLWRF" or attr=="SPFH" or attr=="PRES" or attr=="WIND",\
+    assert attr=="TMP" or attr=="DLWRF" or attr=="SPFH" or attr=="PRES" or attr=="WIND" or attr=="APCP",\
         "The attribute %r is not supported in linear interpolation" % attr
     if attr=="WIND":
         yday = day_of_year(year, month, day)
@@ -160,6 +160,25 @@ def nldas_attr_ds(year, month, day, hour, attr="TMP", res=500):
         # attr_imshow(u_wind_bilinear_result, u_wind_downscale_raster)
         # attr_imshow(v_wind_bilinear_result, v_wind_downscale_raster)
         return u_wind_downscale_raster, v_wind_downscale_raster
+
+    elif attr=='APCP':
+        yday = day_of_year(year, month, day)
+        nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
+                   "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
+                   str(day).zfill(2) + "." + str(hour).zfill(2) + "00.002.grb"
+        nldas_ds = gdal.Open(nldas_fn, GA_ReadOnly)
+        nldas_gt = nldas_ds.GetGeoTransform()
+        attr_raster = find_band_raster(nldas_ds, attr)
+        dem, bilinear_result = bilinear_interpolation(attr_raster,nldas_gt)
+        if res==500:
+            new_dem_fn = "DEM/500m_dem.tif"
+        else:
+            new_dem_fn = "DEM/30m_dem.tif"
+        new_dem_ds = gdal.Open(new_dem_fn, GA_ReadOnly)
+        new_dem = new_dem_ds.ReadAsArray()
+        downscale_raster = resize(bilinear_result, new_dem.shape)
+        return downscale_raster
+
     else:
         yday = day_of_year(year, month, day)
         nldas_fn = "NLDAS_data/" + str(year) + "/" + yday + "/" + \
@@ -191,7 +210,7 @@ def attr_imshow(original, scaled):
         plt.show()
 
 def main():
-    for day in [1,2,3,4,5,6,7,8]:
-        linear_check_wind(2001, 1, day, 18)
+    for day in range(1, 32):
+        linear_check(2001, 1, day, 18, "APCP")
 if __name__ == "__main__":
     main()

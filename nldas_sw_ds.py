@@ -44,6 +44,9 @@ class short_wave_ds():
 
     def nldas_solar_ds(self, year, month, day, hour, res=500):
         # Load NLDAS solar radiation
+        mon = month
+        if month > 5 and month < 10:
+            mon = 5
         day_of_year = self.day_of_year(year, month, day)
         filename = "NLDAS_data/" + str(year) + "/" + day_of_year + "/" + \
                    "NLDAS_FORA0125_H.A" + str(year) + str(month).zfill(2) + \
@@ -52,13 +55,19 @@ class short_wave_ds():
         nldas_sw_raster= self.find_band_raster(nldas_dataset, "DSWRF")
         # scaler is the toporad weighting matrix calculated before
         # idx_array is the index array of the data that is going to be queried in the original NLDAS data
-        scaler_fn = "toporad/" + str(res) + "m_" + str(month).zfill(2) + "_scale.npy"
+        scaler_fn = "toporad/" + str(res) + "m_" + str(mon).zfill(2) + "_scale.npy"
         scaler = np.load(scaler_fn)
         nldas_sw_crop_raster = nldas_sw_raster[self.idx_array]
         nldas_sw_crop_scaled_raster = scaler * nldas_sw_crop_raster
         nldas_sw_crop_scaled_corrected_raster = nldas_sw_crop_scaled_raster * self.forest_correction
-        # self.solar_imshow(nldas_sw_crop_raster, nldas_sw_crop_scaled_raster)
         return nldas_sw_crop_scaled_corrected_raster
+
+    def scale_image(self, image, min, max):
+        im_max = np.max(image)
+        im_min = np.min(image)
+        image = image - im_min
+        image = min + image * (max-min)/(im_max-im_min)
+        return image
 
     def solar_imshow(self, original, scaled):
         min = np.min([np.min(original), np.min(scaled)])

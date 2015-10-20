@@ -18,7 +18,8 @@ class wind_redistribution():
         omega_s = self.slope * np.cos(theta - self.aspect)
         omega_c = self.curvature
         wind_correction_weight =  1. + 0.5 * omega_s + 0.5 * omega_c
-        wind_corrected_magnitude = wind_correction_weight * self.forest_correction * wind_magnitude
+        wind_corrected_magnitude = wind_correction_weight * wind_magnitude
+        # wind_corrected_magnitude = wind_correction_weight * self.forest_correction * wind_magnitude
         # self.wind_compare(wind_magnitude, wind_corrected_magnitude)
         return wind_corrected_magnitude
 
